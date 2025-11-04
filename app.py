@@ -40,6 +40,7 @@ def generate_image(prompt: str, conversation_history: List[Dict]) -> Tuple[Image
     # Configure generation
     generate_content_config = types.GenerateContentConfig(
         response_modalities=["IMAGE", "TEXT"],
+        temperature=0.3,
     )
     
     # Generate content

@@ -44,6 +44,7 @@ def generate():
             "IMAGE",
             "TEXT",
         ],
+        temperature=0.3,
     )
 
     file_index = 0

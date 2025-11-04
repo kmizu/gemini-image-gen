@@ -59,6 +59,21 @@ export GEMINI_API_KEY="your-api-key-here"
 
 ## 💻 使用方法
 
+### 簡単起動（シェルスクリプト）
+
+```bash
+# バッチ版（複数画像生成、推奨）
+./start.sh
+
+# 通常版（単一画像生成）
+./start_simple.sh
+```
+
+起動スクリプトは以下の機能を持っています：
+- 仮想環境の自動検出と有効化
+- .envファイルの存在確認と作成サポート
+- 依存関係の確認とインストール
+
 ### 基本的な起動
 
 ```bash
@@ -138,7 +153,7 @@ gemini-image-gen/
 | 変数名 | 説明 | デフォルト値 |
 |--------|------|-------------|
 | `GEMINI_API_KEY` | Gemini API Key | (必須) |
-| `GEMINI_MODEL_NAME` | 使用するGeminiモデル | `gemini-2.5-flash-image-preview` |
+| `GEMINI_MODEL_NAME` | 使用するGeminiモデル | `gemini-2.5-flash-image` |
 | `HOST` | サーバーホスト | `0.0.0.0` |
 | `PORT` | サーバーポート | `7860` |
 | `SHARE` | Gradio共有リンクを作成 | `false` |
@@ -150,7 +165,7 @@ gemini-image-gen/
 
 ```env
 GEMINI_API_KEY=your-api-key-here
-GEMINI_MODEL_NAME=gemini-2.5-flash-image-preview
+GEMINI_MODEL_NAME=gemini-2.5-flash-image
 HOST=0.0.0.0
 PORT=7860
 SHARE=false

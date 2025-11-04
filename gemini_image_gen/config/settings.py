@@ -22,7 +22,7 @@ class Settings:
     
     # API Configuration
     gemini_api_key: Optional[str] = None
-    model_name: str = "gemini-2.5-flash-image-preview"
+    model_name: str = "gemini-2.5-flash-image"
     
     # Server Configuration
     host: str = "0.0.0.0"

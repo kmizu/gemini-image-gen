@@ -118,13 +118,34 @@ def create_batch_app():
                         info="チェックすると複数枚生成"
                     )
 
-            return settings_group, batch_size_slider, parallel_checkbox, enable_batch_checkbox
+                gr.Markdown("### 🎛️ 生成パラメータ")
+
+                with gr.Row():
+                    temperature_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=1.0,
+                        step=0.1,
+                        label="Temperature",
+                        info="ランダム性（低:安定、高:創造的）"
+                    )
+
+                    top_p_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.95,
+                        step=0.05,
+                        label="Top-p",
+                        info="多様性（0で無効、推奨: 0.9-0.95）"
+                    )
+
+            return settings_group, batch_size_slider, parallel_checkbox, enable_batch_checkbox, temperature_slider, top_p_slider
 
         with gr.Row():
             # Left panel - Settings and History
             with gr.Column(scale=1):
                 # Batch settings
-                settings_group, batch_size_slider, parallel_checkbox, enable_batch_checkbox = create_batch_settings()
+                settings_group, batch_size_slider, parallel_checkbox, enable_batch_checkbox, temperature_slider, top_p_slider = create_batch_settings()
 
                 gr.Markdown("### 📝 会話履歴管理")
 
@@ -209,11 +230,15 @@ def create_batch_app():
                             value=False
                         )
 
-                    # Image upload for editing
-                    upload_image = gr.Image(
-                        label="画像をアップロード（編集用）",
+                    # Image upload for editing (multiple images)
+                    upload_images = gr.Gallery(
+                        label="画像をアップロード（複数可、編集用）",
                         type="pil",
-                        visible=True
+                        show_label=True,
+                        columns=4,
+                        rows=1,
+                        height="auto",
+                        interactive=True
                     )
 
                     with gr.Row():
@@ -286,14 +311,17 @@ def create_batch_app():
             base_prompt: str,
             combo_a1: str, combo_a2: str, combo_a3: str, combo_a4: str,
             combo_b1: str, combo_b2: str, combo_b3: str, combo_b4: str,
-            uploaded_image: Optional[Image.Image] = None,
+            uploaded_images: Optional[List[Image.Image]] = None,
+            temperature: float = 1.0,
+            top_p: float = 0.95,
             progress=gr.Progress()
         ):
             """Handle batch image generation"""
             print(f"🔧 DEBUG: on_generate_batch呼び出し")
             print(f"🔧 DEBUG: 引数タイプ - prompt: {type(prompt)}, manager: {type(manager)}, batch_size: {type(batch_size)}")
             print(f"🔧 DEBUG: checkbox値 - use_parallel: {use_parallel} ({type(use_parallel)}), enable_batch: {enable_batch} ({type(enable_batch)})")
-            print(f"📝 DEBUG: プロンプト='{prompt}', プロンプト長さ={len(prompt) if prompt else 0}, 画像アップロード={'あり' if uploaded_image else 'なし'}")
+            print(f"📝 DEBUG: uploaded_images - type: {type(uploaded_images)}, value: {uploaded_images}, len: {len(uploaded_images) if uploaded_images else 'N/A'}")
+            print(f"📝 DEBUG: プロンプト='{prompt}', プロンプト長さ={len(prompt) if prompt else 0}")
             print(f"📝 DEBUG: プロンプトはNone? {prompt is None}, プロンプトは空文字? {prompt == ''}, strip後空? {not prompt.strip() if prompt else 'N/A'}")
 
             # Handle potential None values from checkboxes
@@ -306,6 +334,77 @@ def create_batch_app():
 
             print(f"🔧 DEBUG: 正規化後 - enable_batch={enable_batch}, use_parallel={use_parallel}")
             print(f"🔀 DEBUG: 組み合わせモード - {combination_mode}")
+
+            # Process uploaded images - Gradio Gallery returns various formats
+            processed_images = None
+            if uploaded_images and len(uploaded_images) > 0:
+                from PIL import Image as PILImage
+                processed_images = []
+                for i, img in enumerate(uploaded_images):
+                    # Skip None or empty values
+                    if img is None:
+                        print(f"⚠️ DEBUG: Image {i+1} - None, skipping")
+                        continue
+
+                    try:
+                        # Gallery can return: PIL.Image, tuple (PIL.Image, caption), dict, or file path
+                        final_img = None
+
+                        if isinstance(img, PILImage.Image):
+                            final_img = img
+                            print(f"📸 DEBUG: Image {i+1} - PIL.Image directly")
+                        elif isinstance(img, tuple):
+                            # Extract image from tuple (image, caption)
+                            img_data = img[0]
+                            if img_data is None:
+                                print(f"⚠️ DEBUG: Image {i+1} - Tuple contains None, skipping")
+                                continue
+                            if isinstance(img_data, PILImage.Image):
+                                final_img = img_data
+                                print(f"📸 DEBUG: Image {i+1} - PIL.Image from tuple")
+                            elif isinstance(img_data, str):
+                                # File path in tuple
+                                final_img = PILImage.open(img_data).convert('RGB')
+                                print(f"📸 DEBUG: Image {i+1} - Loaded from path in tuple")
+                        elif isinstance(img, dict):
+                            # Dict format with 'image' or 'name' key
+                            img_path = img.get('image') or img.get('name') or img.get('path')
+                            if img_path and isinstance(img_path, str):
+                                final_img = PILImage.open(img_path).convert('RGB')
+                                print(f"📸 DEBUG: Image {i+1} - Loaded from dict path")
+                            else:
+                                print(f"⚠️ DEBUG: Image {i+1} - Dict has no valid path, skipping")
+                        elif isinstance(img, str) and img.strip():
+                            # File path string
+                            final_img = PILImage.open(img).convert('RGB')
+                            print(f"📸 DEBUG: Image {i+1} - Loaded from path string")
+                        else:
+                            print(f"⚠️ DEBUG: Image {i+1} - Unknown/invalid type: {type(img)}, skipping")
+
+                        # Ensure the image is fully loaded into memory and detached from file
+                        if final_img:
+                            # Force load all image data into memory
+                            final_img.load()
+                            # Create a new Image object in memory to completely detach from file
+                            img_copy = PILImage.new(final_img.mode, final_img.size)
+                            img_copy.putdata(list(final_img.getdata()))
+                            # Copy metadata
+                            img_copy.info = final_img.info.copy()
+                            processed_images.append(img_copy)
+                            print(f"✅ DEBUG: Image {i+1} - Loaded into memory completely")
+                    except Exception as e:
+                        print(f"❌ DEBUG: Failed to process uploaded image {i+1}: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+
+                if processed_images:
+                    print(f"✅ DEBUG: Successfully processed {len(processed_images)} images")
+                else:
+                    print(f"⚠️ DEBUG: No images were successfully processed, setting to None")
+                    processed_images = None
+
+            # Replace uploaded_images with processed_images (None if no valid images)
+            uploaded_images = processed_images
 
             # Check if combination inputs are provided (auto-detect combination mode)
             combo_a_list = [combo_a1, combo_a2, combo_a3, combo_a4]
@@ -360,13 +459,18 @@ def create_batch_app():
 
             progress(0.2, desc=f"画像生成中: {actual_batch_size}枚 ({'組み合わせ' if combination_mode else 'バッチ'}{'有効' if enable_batch else '無効'})")
 
+            # Convert top_p to None if 0
+            top_p_value = None if top_p == 0.0 else top_p
+
             try:
                 if not enable_batch or actual_batch_size == 1:
                     # Single generation
                     generated_img, response_text = generator.generate(
                         prompt,
                         manager.get_history(),
-                        uploaded_image
+                        uploaded_images,
+                        temperature,
+                        top_p_value
                     )
 
                     if generated_img:
@@ -382,7 +486,7 @@ def create_batch_app():
                             manager,
                             chat_display,
                             "",  # Clear prompt
-                            None,  # Clear uploaded image
+                            [],  # Clear uploaded images
                             gr.Dataset(samples=history_data),
                             gr.update(visible=True),  # batch_results_group
                             [generated_img],  # batch_gallery
@@ -402,13 +506,16 @@ def create_batch_app():
 
                         for i, (combo_prompt, combo_desc) in enumerate(combinations):
                             try:
+                                print("プロンプト: " + combo_prompt)
                                 progress(0.2 + (i / len(combinations)) * 0.7,
                                         desc=f"生成中 {i+1}/{len(combinations)}: {combo_desc}")
 
                                 generated_img, response_text = generator.generate(
                                     combo_prompt,
                                     manager.get_history(),
-                                    uploaded_image
+                                    uploaded_images,
+                                    temperature,
+                                    top_p_value
                                 )
 
                                 if generated_img:
@@ -441,10 +548,12 @@ def create_batch_app():
                         batch_result = generator.generate_batch(
                             prompt=prompt,
                             conversation_history=manager.get_history(),
-                            input_image=uploaded_image,
+                            input_images=uploaded_images,
                             batch_size=actual_batch_size,
                             use_parallel=use_parallel,
-                            progress_callback=progress_callback
+                            progress_callback=progress_callback,
+                            temperature=temperature,
+                            top_p=top_p_value
                         )
 
                     progress(0.9, desc="結果を処理中...")
@@ -471,7 +580,7 @@ def create_batch_app():
                             manager,
                             chat_display,
                             "",  # Clear prompt
-                            None,  # Clear uploaded image
+                            [],  # Clear uploaded images
                             gr.Dataset(samples=history_data),
                             gr.update(visible=True),  # batch_results_group
                             batch_result.success_images,  # batch_gallery
@@ -676,13 +785,16 @@ def create_batch_app():
                 base_prompt,
                 combo_a1, combo_a2, combo_a3, combo_a4,
                 combo_b1, combo_b2, combo_b3, combo_b4,
-                upload_image
+                upload_images,
+                # Generation parameters
+                temperature_slider,
+                top_p_slider
             ],
             outputs=[
                 conversation_manager,
                 chatbot,
                 prompt_input,
-                upload_image,
+                upload_images,
                 history_items,
                 batch_results_group,
                 batch_gallery,
@@ -706,13 +818,16 @@ def create_batch_app():
                 base_prompt,
                 combo_a1, combo_a2, combo_a3, combo_a4,
                 combo_b1, combo_b2, combo_b3, combo_b4,
-                upload_image
+                upload_images,
+                # Generation parameters
+                temperature_slider,
+                top_p_slider
             ],
             outputs=[
                 conversation_manager,
                 chatbot,
                 prompt_input,
-                upload_image,
+                upload_images,
                 history_items,
                 batch_results_group,
                 batch_gallery,

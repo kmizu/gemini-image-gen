@@ -69,8 +69,30 @@ def create_app():
         with gr.Row():
             # Left panel - History management
             with gr.Column(scale=1):
+                gr.Markdown("### 🎛️ 生成パラメータ")
+
+                with gr.Row():
+                    temperature_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=2.0,
+                        value=1.0,
+                        step=0.1,
+                        label="Temperature",
+                        info="ランダム性（低:安定、高:創造的）"
+                    )
+
+                with gr.Row():
+                    top_p_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.95,
+                        step=0.05,
+                        label="Top-p",
+                        info="多様性（0で無効、推奨: 0.9-0.95）"
+                    )
+
                 gr.Markdown("### 📝 会話履歴")
-                
+
                 with gr.Row():
                     clear_btn = gr.Button("🗑️ クリア", size="sm", variant="stop")
                     export_btn = gr.Button("💾 保存", size="sm")
@@ -119,11 +141,15 @@ def create_app():
                         max_lines=5
                     )
                     
-                    # Image upload for editing
-                    upload_image = gr.Image(
-                        label="画像をアップロード（編集用）",
+                    # Image upload for editing (multiple images)
+                    upload_images = gr.Gallery(
+                        label="画像をアップロード（複数可、編集用）",
                         type="pil",
-                        visible=True
+                        show_label=True,
+                        columns=4,
+                        rows=1,
+                        height="auto",
+                        interactive=True
                     )
                     
                     with gr.Row():
@@ -152,32 +178,94 @@ def create_app():
         
         # Event handlers
         def on_generate(
-            prompt: str, 
+            prompt: str,
             manager: ConversationManager,
-            uploaded_image: Optional[Image.Image] = None,
+            uploaded_images: Optional[List[Image.Image]] = None,
+            temperature: float = 1.0,
+            top_p: float = 0.95,
             progress=gr.Progress()
         ):
             """Handle image generation"""
             if not prompt.strip():
                 raise gr.Error("プロンプトを入力してください")
-            
+
             try:
                 settings.validate()
             except ValueError as e:
                 raise gr.Error(str(e))
-            
+
             progress(0.1, desc="処理中...")
-            
+
+            # Process uploaded images - Gradio Gallery returns various formats
+            processed_images = None
+            if uploaded_images and len(uploaded_images) > 0:
+                from PIL import Image as PILImage
+                processed_images = []
+                for i, img in enumerate(uploaded_images):
+                    # Skip None or empty values
+                    if img is None:
+                        continue
+
+                    try:
+                        # Gallery can return: PIL.Image, tuple (PIL.Image, caption), dict, or file path
+                        final_img = None
+
+                        if isinstance(img, PILImage.Image):
+                            final_img = img
+                        elif isinstance(img, tuple):
+                            # Extract image from tuple (image, caption)
+                            img_data = img[0]
+                            if img_data is None:
+                                continue
+                            if isinstance(img_data, PILImage.Image):
+                                final_img = img_data
+                            elif isinstance(img_data, str):
+                                # File path in tuple
+                                final_img = PILImage.open(img_data).convert('RGB')
+                        elif isinstance(img, dict):
+                            # Dict format with 'image' or 'name' key
+                            img_path = img.get('image') or img.get('name') or img.get('path')
+                            if img_path and isinstance(img_path, str):
+                                final_img = PILImage.open(img_path).convert('RGB')
+                        elif isinstance(img, str) and img.strip():
+                            # File path string
+                            final_img = PILImage.open(img).convert('RGB')
+
+                        # Ensure the image is fully loaded into memory and detached from file
+                        if final_img:
+                            # Force load all image data into memory
+                            final_img.load()
+                            # Create a new Image object in memory to completely detach from file
+                            img_copy = PILImage.new(final_img.mode, final_img.size)
+                            img_copy.putdata(list(final_img.getdata()))
+                            # Copy metadata
+                            img_copy.info = final_img.info.copy()
+                            processed_images.append(img_copy)
+                    except Exception as e:
+                        print(f"❌ Failed to process uploaded image {i+1}: {str(e)}")
+
+                # Set to None if no valid images were processed
+                if not processed_images:
+                    processed_images = None
+
+            # Replace uploaded_images with processed_images (None if no valid images)
+            uploaded_images = processed_images
+
             # Add user message
             manager.add_message("user", prompt)
-            
+
             progress(0.3, desc="Gemini APIに接続中...")
-            
+
+            # Convert top_p to None if 0
+            top_p_value = None if top_p == 0.0 else top_p
+
             # Generate image
             generated_img, response_text = generator.generate(
-                prompt, 
+                prompt,
                 manager.get_history(),
-                uploaded_image
+                uploaded_images,
+                temperature,
+                top_p_value
             )
             
             progress(0.8, desc="画像を処理中...")
@@ -197,7 +285,7 @@ def create_app():
                 generated_img,
                 gr.update(visible=generated_img is not None),
                 "",
-                None,  # Clear uploaded image
+                [],  # Clear uploaded images
                 gr.Dataset(samples=history_data),
                 "✅ 生成完了"
             )
@@ -347,29 +435,29 @@ def create_app():
         # Wire up events
         generate_btn.click(
             fn=on_generate,
-            inputs=[prompt_input, conversation_manager, upload_image],
+            inputs=[prompt_input, conversation_manager, upload_images, temperature_slider, top_p_slider],
             outputs=[
                 conversation_manager,
                 chatbot,
                 generated_image,
                 image_group,
                 prompt_input,
-                upload_image,
+                upload_images,
                 history_items,
                 status
             ]
         )
-        
+
         prompt_input.submit(
             fn=on_generate,
-            inputs=[prompt_input, conversation_manager, upload_image],
+            inputs=[prompt_input, conversation_manager, upload_images, temperature_slider, top_p_slider],
             outputs=[
                 conversation_manager,
                 chatbot,
                 generated_image,
                 image_group,
                 prompt_input,
-                upload_image,
+                upload_images,
                 history_items,
                 status
             ]
